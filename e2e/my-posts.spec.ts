@@ -1,25 +1,26 @@
 import type { Page } from "@playwright/test";
 import test, { expect } from "@playwright/test";
-import { articleExcerpt, loggedInAsUserOne } from "./utils";
+import { loggedInAsUserOne, createArticle } from "./utils";
+import { articleExcerpt } from "./constants";
 
-async function openPublishedTab(page: Page) {
+type TabName = "Drafts" | "Scheduled" | "Published";
+
+async function openTab(page: Page, tabName: TabName) {
   await page.goto("http://localhost:3000/my-posts");
-  await page.getByRole("link", { name: "Published" }).click();
-  await expect(page).toHaveURL(/\/my-posts\?tab=published$/);
+  await page.getByRole("link", { name: tabName }).click();
+  const slug = tabName.toLowerCase();
+  await page.waitForURL(`http://localhost:3000/my-posts?tab=${slug}`);
+  await expect(page).toHaveURL(new RegExp(`\\/my-posts\\?tab=${slug}`));
 }
 
-async function openDeleteModal(page: Page) {
-  await page.getByRole("button", { name: "Options" }).click();
-  const optionsDiv = page.locator(
-    "div[aria-labelledby='headlessui-menu-button-:r5:']",
-  );
-  await expect(optionsDiv).toBeVisible();
-  const deleteButton = optionsDiv.locator("text=Delete");
-  await deleteButton.click();
-  const confirmationDiv = page.getByText(
-    "Are you sure you want to delete this article?",
-  );
-  await expect(confirmationDiv).toBeVisible();
+async function openDeleteModal(page: Page, title: string) {
+  const article = page.locator(`article:has-text("${title}")`);
+  await expect(article).toBeVisible();
+  await article.locator("button.dropdown-button").click();
+  await article.locator('text="Delete"').click();
+  await expect(
+    page.getByText("Are you sure you want to delete this article?"),
+  ).toBeVisible();
 }
 
 test.describe("Unauthenticated my-posts Page", () => {
@@ -56,31 +57,38 @@ test.describe("Authenticated my-posts Page", () => {
     await expect(page.getByRole("link", { name: "Scheduled" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Published" })).toBeVisible();
 
-    await page.getByRole("link", { name: "Drafts" }).click();
-    await expect(
-      page.getByRole("heading", { name: "Draft Article" }),
-    ).toBeVisible();
-    await expect(page.getByText(articleExcerpt)).toBeVisible();
-
-    await page.getByRole("link", { name: "Scheduled" }).click();
-    await expect(
-      page.getByRole("heading", { name: "Scheduled Article" }),
-    ).toBeVisible();
-    await expect(page.getByText(articleExcerpt)).toBeVisible();
-
-    await page.getByRole("link", { name: "Published" }).click();
+    await openTab(page, "Published");
     await expect(
       page.getByRole("heading", { name: "Published Article" }),
     ).toBeVisible();
-    await expect(page.getByText(articleExcerpt, { exact: true })).toBeVisible();
+    await expect(page.getByText(articleExcerpt)).toBeVisible();
+
+    await openTab(page, "Scheduled");
+    await expect(
+      page.getByRole("heading", { name: "Scheduled Article" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("This is an excerpt for a scheduled article."),
+    ).toBeVisible();
+
+    await openTab(page, "Drafts");
+    await expect(
+      page.getByRole("heading", { name: "Draft Article" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("This is an excerpt for a draft article.", {
+        exact: true,
+      }),
+    ).toBeVisible();
   });
 
   test("User should close delete modal with Cancel button", async ({
     page,
   }) => {
+    const title = "Published Article";
     await page.goto("http://localhost:3000/my-posts");
-    await openPublishedTab(page);
-    await openDeleteModal(page);
+    await openTab(page, "Published");
+    await openDeleteModal(page, title);
 
     const closeButton = page.getByRole("button", { name: "Cancel" });
     await closeButton.click();
@@ -91,9 +99,10 @@ test.describe("Authenticated my-posts Page", () => {
   });
 
   test("User should close delete modal with Close button", async ({ page }) => {
+    const title = "Published Article";
     await page.goto("http://localhost:3000/my-posts");
-    await openPublishedTab(page);
-    await openDeleteModal(page);
+    await openTab(page, "Published");
+    await openDeleteModal(page, title);
 
     const closeButton = page.getByRole("button", { name: "Close" });
     await closeButton.click();
@@ -104,15 +113,20 @@ test.describe("Authenticated my-posts Page", () => {
   });
 
   test("User should delete published article", async ({ page }) => {
+    const article = {
+      id: "test-id-for-deletion",
+      title: "Article to be deleted",
+      slug: "article-to-be-deleted",
+      excerpt: "This is an excerpt for the article to be deleted.",
+      body: "This is the body for the article to be deleted.",
+    };
+    await createArticle(article);
     await page.goto("http://localhost:3000/my-posts");
-    await openPublishedTab(page);
-    await openDeleteModal(page);
+    await openTab(page, "Published");
+    await expect(page.getByRole("link", { name: article.title })).toBeVisible();
+    await openDeleteModal(page, article.title);
 
-    const closeButton = page.getByRole("button", { name: "Delete" });
-    await closeButton.click();
-
-    await expect(
-      page.getByRole("link", { name: "/articles/e2e-test-slug-published" }),
-    ).toHaveCount(0);
+    await page.getByRole("button", { name: "Delete" }).click();
+    await expect(page.getByRole("link", { name: article.slug })).toHaveCount(0);
   });
 });
